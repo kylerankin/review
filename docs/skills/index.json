@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-09-11",
+  "generated_at": "2026-09-13",
   "schema_version": "1.0",
   "skills": [
     {
@@ -190,8 +190,8 @@
         "automerge"
       ],
       "description": "Manages batch landings, multi-repo lane partitioning, fix-and-land agents, and landing status persistence. Use when modifying batch execution or landing.py.",
-      "version": "1.2",
-      "last_updated": "2026-09-09",
+      "version": "1.3",
+      "last_updated": "2026-09-13",
       "doc_type": "procedure"
     },
     {
@@ -216,7 +216,7 @@
     {
       "id": "pr-labels",
       "name": "pr-labels",
-      "one_line_purpose": "Enforce the canonical factory seven-label and automation label contract.",
+      "one_line_purpose": "Enforce the canonical factory lifecycle, admission, and automation label contract.",
       "entry_point": "docs/skills/pr-labels.md",
       "category": "meta",
       "status": "active",
@@ -227,9 +227,9 @@
         "automation",
         "workflow"
       ],
-      "description": "Defines projectbluefin's canonical seven-label workflow contract and repository automation labels (lgtm, override, security-advisory). Use when managing labels or triage.",
-      "version": "1.0",
-      "last_updated": "2026-09-06",
+      "description": "Defines projectbluefin's lifecycle labels, 3-clanker-queue admission, 3-human-queue routing, and the lgtm approval flag. Use when managing labels or triage.",
+      "version": "1.1",
+      "last_updated": "2026-09-13",
       "doc_type": "policy"
     },
     {
@@ -246,9 +246,9 @@
         "labels",
         "testing"
       ],
-      "description": "Defines pull request, branch, title, trailer, and validation requirements, the factory's seven-label contract and this repository's three automation labels, how to reconcile a long-lived branch with squash-merged main, and why a test must run a feature.",
-      "version": "1.11",
-      "last_updated": "2026-09-09",
+      "description": "Defines pull request, branch, title, trailer, and validation requirements, repository lifecycle and queue label taxonomy, how to reconcile a long-lived branch with squash-merged main, and why a test must run a feature.",
+      "version": "1.12",
+      "last_updated": "2026-09-13",
       "doc_type": "policy"
     },
     {
@@ -272,18 +272,19 @@
     {
       "id": "review-dashboard",
       "name": "review-dashboard",
-      "one_line_purpose": "Change the maintainer dashboard without weakening its gate or hiding the queue.",
+      "one_line_purpose": "Maintain the Oh My Pi review extension and the retained Textual compatibility dashboard.",
       "entry_point": "docs/skills/review-dashboard.md",
       "category": "ci-ops",
       "status": "active",
       "tags": [
-        "textual",
-        "tui",
+        "omp",
+        "extension",
         "dashboard",
         "review",
+        "textual",
         "maintainer"
       ],
-      "description": "Maintains image/tui/bluefin_review_tui.py: the mutation gate, the queue view, and its Textual patterns. Use when editing the dashboard or its pilot tests.",
+      "description": "Maintains the primary Oh My Pi review extension in image/extension/bluefin-review/ and the retained Textual compatibility dashboard in image/tui/bluefin_review_tui.py. Use when editing review UI or action seams.",
       "version": "3.1",
       "last_updated": "2026-09-09",
       "doc_type": "runbook"

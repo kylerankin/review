@@ -1,7 +1,7 @@
 ---
 name: landing-batches
-version: "1.2"
-last_updated: 2026-09-09
+version: "1.3"
+last_updated: 2026-09-13
 id: landing-batches
 one_line_purpose: Manage multi-PR landing batches and automated fix-and-land agents.
 entry_point: docs/skills/landing-batches.md
@@ -34,23 +34,40 @@ or cluster scale-out (`cluster-workers.md`).
 1. **Selection & Confirmation:** `[b]` marks stops for batching; `[A]` opens
    `BatchPlanScreen` showing every selected PR and the exact agent command.
    The Dispatch button or Enter proceeds; the Abort button or Escape cancels.
-2. **Multi-Repository Partitioning:** Multi-repo selections partition into
+2. **Pre-flight Ruleset Gate:** Before any PR in the confirmed batch is
+   dispatched, a pre-flight ruleset gate reads each PR's live GitHub evidence:
+   a repository ruleset that requires more write-access reviews than GitHub
+   carries, a require_last_push_approval that invalidates our own approval, or
+   an own-authored PR that policy bars is held — deselected with an
+   `awaiting-reviewers` note in the detail pane and removed from the batch, so
+   the batch dispatches only PRs the ruleset will actually land. This is what
+   stops the same blocked PR being re-spawned and re-blocked pass after pass
+   (see `[#514](https://github.com/projectbluefin/review/issues/514)`).
+3. **Branch-Target Pre-Flight:** The same gate also judges the branch
+   target itself (#517): `projectbluefin/bluefin` and `bluefin-lts` land
+   only from `testing`, so a PR aimed at `main` — or any PR whose merge
+   base is `CONFLICTING`/`DIRTY` — is held with a note naming the base
+   found, the required target, and the file drift between them, and is
+   deselected so no later pass re-selects it. Absent evidence never
+   blocks. The landing brief states the same rule, so an agent also
+   fast-fails rather than repairing an unmergeable configuration.
+4. **Multi-Repository Partitioning:** Multi-repo selections partition into
    independent per-repository `LandingTask` lanes.
-3. **Concurrent Execution:** Up to `BLUEFIN_REVIEW_CONCURRENT_LANDINGS`
+5. **Concurrent Execution:** Up to `BLUEFIN_REVIEW_CONCURRENT_LANDINGS`
    (default 7) run concurrently across disjoint repository sets.
-4. **Fix & Land:** `[$]` ("slay") executes the pipeline end-to-end and owns
+6. **Fix & Land:** `[$]` ("slay") executes the pipeline end-to-end and owns
    fix dispatch: a review with evidenced findings seeds a fixer
    (`new_fix_task`) behind slay's own gates. The standalone `[f]`/`[F]`
    ReviewScreen lane is deleted — it dispatched the same fixer with no
    confirmation, no blocked-reason check, no head revalidation, and no
    durable run record. See below: `[$]` is a durable per-pull-request state
    machine, not a sequence of dispatches.
-5. **State Directory:** State persists at `${XDG_STATE_HOME}/bluefin-review/landings/`.
+7. **State Directory:** State persists at `${XDG_STATE_HOME}/bluefin-review/landings/`.
    Each batch receives `.jsonl` events, `.log` output, and `.prompt.md`.
    Filenames qualify with `BLUEFIN_REVIEW_INSTANCE` to avoid cross-session collisions.
-6. **Reporting Seam:** The landing agent never writes status directly; it calls:
+8. **Reporting Seam:** The landing agent never writes status directly; it calls:
    `/opt/bluefin/tui/.venv/bin/python /opt/bluefin/tui/landing.py report ...`
-7. **Process Termination:** The agent runs in its own process group; `[x]` on
+9. **Process Termination:** The agent runs in its own process group; `[x]` on
    the batch screen stops it cleanly via `SIGTERM`.
 
 The landing module is the status writer and command boundary. It builds argv
@@ -124,18 +141,32 @@ process-wide scheduler in
 
 ## Terminal Recovery
 
-A completed landing never silently arms a retry. Merged rows leave the
-selection. Failed, blocked, unfinished, missing-outcome, and
-`awaiting-stable` rows retain a bounded visible reason but are deselected; a
-maintainer explicitly selects and reconfirms any later retry.
+A completed landing never silently arms a retry. Merged rows leave the selection; failed, blocked,
+unfinished, missing-outcome, and `awaiting-stable` rows keep a bounded visible reason but are
+deselected, and a maintainer reconfirms any later retry.
 
-After every confirmed batch reaches terminal PR outcomes, the existing
-final-review lane starts exactly one consolidated recovery review. Its prompt
-names only that confirmed batch and includes its bounded, JSON-quoted terminal
-states and reasons. The reviewer and any fresh fixer may repair only those
-already authorized branches; neither retries landing, approves, merges,
-completes Hive work, or expands the batch. Human retry and merge remain
-separate explicit actions.
+After every confirmed batch reaches terminal PR outcomes, the existing final-review lane starts
+exactly one consolidated recovery review. Its prompt names only that confirmed batch and includes
+its bounded, JSON-quoted terminal states and reasons. The reviewer and any fresh fixer may repair
+only those already authorized branches; neither retries landing, approves, merges, completes Hive
+work, or expands the batch. Human retry and merge remain separate explicit actions.
+
+Deselection alone does not stop an unattended loop: autoslay reselects from the queue, not from
+that selection. `slayableItems()` excludes an item whose newest durable record is a terminal
+blocked state (`isItemTerminalBlocked`). A block describes one commit at one moment, so it
+suppresses only while nothing has moved since: a different head or newer GitHub activity re-admits
+it, since most blocks here say "needs a second approval" — a review clears that, not a push.
+Comparing against no currency excluded every blocked item forever and starved the queue. That read
+needs its own wider bounded window, since one batch writes one landing file. Autoslay stops
+outright when a refreshed queue hands it the identical batch twice.
+
+A dispatch prompt never tells an agent to wait for CI, and caps what it may pull: whatever a
+command prints is re-sent every later turn, and one measured run spent 91% of its tokens on
+re-sent context with 80% of its `gh pr view` calls re-reading a pull request it already had. So it
+ships the queue's own read inline per item, and says read state once with a minimal `--json` set
+and list changes with `--name-only`. The caveat that the read is stale lives *inside* the
+brackets, and subagent rules ship as a delimited verbatim block: a parent copies item lines and
+drops the prose around them — observed live, seven subagents got the state and none got its rule.
 
 ## Common Rationalizations
 
@@ -157,10 +188,12 @@ separate explicit actions.
 - Landing a head that differs from the head that was reviewed.
 - A mutation using snapshot evidence rather than a live pre-mutation check.
 - In-flight state represented as membership in a set rather than a run record.
+- A queue that re-selects a terminal PR, excludes one whose state moved on, or loops unendingly.
 
 ## Verification
 
 ```bash
 python3 -m unittest discover -s tests -p "*test*landing*"
+bash tests/omp-review-mode.sh
 bash tests/dashboard-contract.sh
 ```
