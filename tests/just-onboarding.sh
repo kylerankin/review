@@ -1201,7 +1201,7 @@ assert_eq "$exec_socket_mounts" 2 "expected exactly the socket mount and its env
 socket_dir="$(tr ' ' '\n' <"$runner_log" | sed -n 's|^\(.*bluefin-review-exec\.[^:]*\):/run/bluefin-review-exec:rw,z$|\1|p' | head -1)"
 [[ -n "$socket_dir" ]] || fail "the accepted review-exec must name its socket directory"
 assert_file_not_exists "$socket_dir"
-pgrep -f "review-exec-broker.py serve --socket ${socket_dir}" >/dev/null 2>&1 && \
+pgrep -f "review-exec-broker.py serve --socket ${socket_dir}" >/dev/null 2>&1 &&
   fail "the broker must not outlive the foreground session"
 
 begin "review-queue: gVisor gets host-uds=open, other runtimes never do (review-exec)"
