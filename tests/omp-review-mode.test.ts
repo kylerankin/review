@@ -2049,6 +2049,47 @@ test("action prompts name the evidence and refuse to merge red checks", () => {
 	assert.match(actionPrompt({ kind: "review", item }), /Never ask the user for confirmation/);
 });
 
+test("batch contracts stay split by action authority: read-only never inherits Slay write rules (#479.1)", () => {
+	const item = queueItem();
+	const batch = [item, queueItem({ id: 7, repo: "projectbluefin/other" })];
+	// Write authority that a Slay batch carries: commit/consolidation, PR delivery,
+	// merge, and the #475 delivery contract. Expressed as the concrete tokens the
+	// Slay helper injects.
+	const writeAuthority = /anonymous dirty working tree|VERIFICATION_UNAVAILABLE|DRAFT_PR_OPENED|PARTIAL_WORK_PRESERVED|gh pr merge|squash-merge|gh pr review|conflicting merge base|is a repair you perform|never merge your own/;
+	// Read-only actions must never acquire implementation, consolidation, commit,
+	// PR-delivery, or merge instructions from Slay's batch helper.
+	for (const kind of ["review", "diff"] as const) {
+		const prompt = actionPrompt({ kind, item, items: batch });
+		assert.doesNotMatch(prompt, writeAuthority, `${kind} batch leaked Slay write authority`);
+		// But the neutral shared mechanics still travel: the 7-subagent fan-out and
+		// autonomy are fine for any batch.
+		assert.match(prompt, /maximum of 7 concurrent subagents/);
+		assert.match(prompt, /execute all actions end-to-end autonomously/);
+	}
+	// Write actions keep their authority.
+	for (const kind of ["docs", "approve", "fix", "slay"] as const) {
+		const prompt = actionPrompt({ kind, item, items: batch });
+		assert.match(prompt, writeAuthority, `${kind} batch dropped its write authority`);
+	}
+});
+
+test("issue Slay carries exactly one PR-grouping policy; single and batch agree (#479.1)", () => {
+	const issue = queueItem({ id: 936, type: "issue", repo: "projectbluefin/documentation" });
+	const single = actionPrompt({ kind: "slay", item: issue });
+	const batch = actionPrompt({ kind: "slay", item: issue, items: [issue, queueItem({ id: 941, type: "issue", repo: "projectbluefin/documentation" })] });
+	// One coherent policy: one pull request per issue, in both shapes.
+	assert.match(single, /open a pull request/);
+	assert.match(batch, /one pull request per issue/);
+	// No competing one-PR-per-repository delivery policy anywhere in Slay.
+	const slayPolicy = `${single}\n${batch}`;
+	assert.doesNotMatch(slayPolicy, /(one|a single) pull request per repository/);
+	// Delivery contract (#475) present in both.
+	for (const p of [single, batch]) {
+		assert.match(p, /VERIFICATION_UNAVAILABLE/);
+		assert.match(p, /anonymous dirty working tree/);
+	}
+});
+
 test("slaying an issue ships a pull request for someone else to merge", () => {
 	const issue = queueItem({ id: 936, type: "issue", repo: "projectbluefin/documentation", title: "npm test misses scripts/lib" });
 	const prompt = actionPrompt({ kind: "slay", item: issue });
