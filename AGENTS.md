@@ -35,18 +35,22 @@ works for any GitHub repository; Bluefin and Hive are additive, never required.
 - **Review** (`image/extension/bluefin-review/`) provides the generic core:
   PRs, issues, queues, search, reading, inspection, review, repair,
   implementation, and landing. PRs and issues are first-class objects in any
-  repository. Actions match the object: PR review/diff/fix/Slay, and issue
-  inspect/implement/fix. The core never offers an action the backend rejects
-  for the selected object, and never labels an authorized session
-  "browse-only" when Hive is absent — GitHub actions remain available.
+  repository. Actions are intended to match the object: PR
+  review/diff/fix/Slay, and issue inspect/implement/fix. Backend capability and
+  current feature support remain authoritative; the core does not promise that
+  every available control succeeds for every selected object, and never labels
+  an authorized session "browse-only" when Hive is absent — GitHub actions
+  remain available.
 - **OMP** provides sessions, agents, execution, and traces.
 - **Bluefin** adds its doctrine, specialized reviewers, labels, conventions,
   admission rules, and organization policy. It is selected where appropriate;
   general reviewers follow the target repository's own rules.
-- **Hive** adds ordering, claims, stages, knowledge, and contributor context,
-  reached through the Hive MCP server when enabled and GitHub otherwise. It
-  keeps ownership of assignments and completion; Review does not take over
-  Hive assignments or add a scheduler.
+- **Hive** adds ordering, claims, stages, knowledge, and contributor context
+  through the Hive MCP server when enabled. Without Hive, GitHub evidence
+  remains available, but Hive ordering and Hive-only claims, stages, knowledge,
+  and contributor context do not fall back to GitHub. It keeps ownership of
+  assignments and completion; Review does not take over Hive assignments or
+  add a scheduler.
 
 GitHub defines what work exists. Review defines what can be done with it. Hive
 may prioritize and coordinate it. Bluefin may specialize its policy. Nothing in
