@@ -776,7 +776,7 @@ export async function fetchDiff(repo: string, pullRequest: number, options: Diff
 				patch,
 			});
 		}
-		result.headSha = await fetchPrHeadSha(repo, pullRequest, { token, signal });
+		result.headSha = await fetchPrHeadSha(repo, pullRequest, { token, signal, fetchImpl: options.fetchImpl });
 		return result;
 	} catch (error) {
 		result.error = error instanceof Error ? error.message : String(error);
