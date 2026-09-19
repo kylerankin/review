@@ -4318,4 +4318,81 @@ test("the reader never renders a detail of one type through the other type's for
 	assert.ok(frameAfter(dashboard).some((r) => r.includes("ISSUE READER: projectbluefin/review#611")), "the reader reloads for the swapped row");
 });
 
+test("a click on the reader's own key bar fires the chord it advertises", (t) => {
+	const mode = new ReviewMode({ org: "projectbluefin" });
+	mode.items = [
+		queueItem({ id: 611, type: "issue", title: "issue rows advertise a reader", url: "https://github.com/projectbluefin/review/issues/611" }),
+	];
+	let action;
+	const dashboard = new ReviewDashboard({ requestRender() {} }, PLAIN_PAINTER, mode, (result) => { action = result; }, () => {}, 24);
+	t.after(() => dashboard.dispose());
+	const frame = () => dashboard.render(200);
+
+	mode.selectById("projectbluefin/review", 611);
+	dashboard.handleInput("v");
+	assert.ok(frame().some((r) => r.includes("ISSUE READER: projectbluefin/review#611")), "the issue reader is open");
+
+	// The bar the reader draws is the one the user sees, so its chords work by
+	// click: they used to be swallowed by the guard that protects the rows
+	// underneath, while the queue's key bar geometry two rows lower — where the
+	// reader draws nothing — dispatched instead.
+	const barRow = frame().findIndex((line) => line.includes("o browser"));
+	assert.ok(barRow > 0, "the reader draws its own key bar");
+	const barText = frame()[barRow];
+	dashboard.handleClick(barText.indexOf("o browser") + 1, barRow);
+	assert.equal(action?.kind, "open_browser", "clicking the reader's browser chord opens the row in a browser");
+	assert.equal(action?.item.id, 611, "the browser chord acts on the row the reader shows");
+
+	// A chord the issue reader does not advertise is not reachable by click
+	// either: the rows below the bar dispatch nothing at all.
+	action = undefined;
+	dashboard.handleClick(5, barRow + 2);
+	assert.equal(action, undefined, "a click below the reader's key bar dispatches nothing");
+	assert.ok(frame().some((r) => r.includes("ISSUE READER: projectbluefin/review#611")), "the reader stays open");
+
+	// 'q/esc' closes the reader, the same as the keystroke it advertises.
+	dashboard.handleClick(barText.indexOf("q/esc") + 1, barRow);
+	assert.ok(!frame().some((r) => r.includes("ISSUE READER")), "clicking back closes the reader");
+	assert.equal(action, undefined, "closing the reader by click emits no action");
+});
+
+test("a queue swap under the reader reloads it without waiting for a keypress", async (t) => {
+	const mode = new ReviewMode({ org: "projectbluefin" });
+	mode.items = [queueItem({ id: 42, type: "pr", headSha: "c".repeat(40) })];
+	mode.token = "test-token";
+	const originalFetch = globalThis.fetch;
+	globalThis.fetch = (async (url: string) => {
+		const s = String(url);
+		if (s.includes("/issues/611/comments")) return { ok: true, status: 200, statusText: "OK", json: async () => [] };
+		if (s.includes("/issues/611/timeline")) return { ok: true, status: 200, statusText: "OK", json: async () => [] };
+		if (s.includes("/issues/611")) {
+			return { ok: true, status: 200, statusText: "OK", json: async () => ({ title: "issue row", body: "Swapped in by a refresh.", user: { login: "ada" }, state: "open", labels: [], url: "https://github.com/projectbluefin/review/issues/611" }) };
+		}
+		if (s.includes("/pulls/42") && !s.includes("/reviews")) {
+			return { ok: true, status: 200, statusText: "OK", json: async () => ({ title: "PR reader", body: "Resolves HIVE_HUB first.", user: { login: "jorge" }, head: { sha: "c".repeat(40) } }) };
+		}
+		return { ok: true, status: 200, statusText: "OK", json: async () => [] };
+	}) as typeof fetch;
+	t.after(() => { globalThis.fetch = originalFetch; });
+
+	const dashboard = new ReviewDashboard({ requestRender() {} }, PLAIN_PAINTER, mode, () => {}, () => {}, 160);
+	t.after(() => dashboard.dispose());
+
+	mode.selectById("projectbluefin/review", 42);
+	dashboard.handleInput("v");
+	await flush();
+	assert.ok(frameAfter(dashboard).some((r) => r.includes("Resolves HIVE_HUB first.")), "the PR reader is populated");
+
+	// An external refresh swaps the row. The first frame after it still shows the
+	// loading surface — but the fetch for the new row is already in flight, so the
+	// reader fills in on its own instead of waiting for the user to press a key.
+	mode.items = [queueItem({ id: 611, type: "issue", title: "issue row", url: "https://github.com/projectbluefin/review/issues/611", headSha: undefined })];
+	const swapped = frameAfter(dashboard);
+	assert.ok(swapped.some((r) => r.includes("loading description, conversation, and linked pull requests")), "the swapped row shows its own loading surface");
+	await flush();
+	const reloaded = frameAfter(dashboard);
+	assert.ok(reloaded.some((r) => r.includes("Swapped in by a refresh.")), "the reader reloads the swapped row with no keypress");
+	assert.ok(!reloaded.some((r) => r.includes("Resolves HIVE_HUB first.")), "the stale PR detail is gone");
+});
+
 const frameAfter = (dashboard: { render: (w: number) => string[] }) => dashboard.render(160);

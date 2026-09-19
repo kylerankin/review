@@ -100,10 +100,12 @@ export function sanitizeMarkdown(raw: string): string {
 }
 
 /**
- * LRU cache bounded to maxEntries for PR details.
- * Cache key: `${repo}#${prNumber}@${headSha}`.
+ * LRU cache bounded to maxEntries for one kind of object detail. Callers own
+ * the key: the PR reader keys on `${repo}#${prNumber}@${headSha}` so a new head
+ * invalidates, while the issue reader keys on `${repo}#${number}` because an
+ * issue has no head.
  */
-export class PrDetailCache<T = PrDetail> {
+export class DetailCache<T = PrDetail> {
 	private readonly maxEntries: number;
 	private readonly map = new Map<string, T>();
 

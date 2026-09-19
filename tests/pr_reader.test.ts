@@ -9,7 +9,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-	PrDetailCache,
+	DetailCache,
 	getNextPrKey,
 	issueDetailToLines,
 	prDetailToLines,
@@ -47,8 +47,8 @@ test("sanitizeMarkdown returns empty string for empty input", () => {
 	assert.equal(sanitizeMarkdown(""), "");
 });
 
-test("PrDetailCache stores and retrieves by repo#number@headSha key", () => {
-	const cache = new PrDetailCache(3);
+test("DetailCache stores and retrieves by repo#number@headSha key", () => {
+	const cache = new DetailCache(3);
 	const detail1: PrDetail = {
 		repo: "projectbluefin/review",
 		number: 547,
@@ -73,8 +73,8 @@ test("PrDetailCache stores and retrieves by repo#number@headSha key", () => {
 	assert.deepEqual(retrieved, detail1);
 });
 
-test("PrDetailCache evicts LRU entry past capacity", () => {
-	const cache = new PrDetailCache(2);
+test("DetailCache evicts LRU entry past capacity", () => {
+	const cache = new DetailCache(2);
 
 	const createDetail = (num: number, sha: string): PrDetail => ({
 		repo: "test/repo",
@@ -106,8 +106,8 @@ test("PrDetailCache evicts LRU entry past capacity", () => {
 	assert.equal(cache.has(key3), true, "key3 should remain");
 });
 
-test("PrDetailCache invalidates on headSha change", () => {
-	const cache = new PrDetailCache(5);
+test("DetailCache invalidates on headSha change", () => {
+	const cache = new DetailCache(5);
 	const detailV1: PrDetail = {
 		repo: "test/repo",
 		number: 10,
@@ -133,8 +133,8 @@ test("PrDetailCache invalidates on headSha change", () => {
 	assert.equal(cache.get(keyV2)?.body, "Updated PR description");
 });
 
-test("PrDetailCache clear() wipes all entries", () => {
-	const cache = new PrDetailCache(5);
+test("DetailCache clear() wipes all entries", () => {
+	const cache = new DetailCache(5);
 	cache.set("test#1@sha", {
 		repo: "test",
 		number: 1,

@@ -18,7 +18,7 @@ import { BATCH_LIMIT, type ReviewMode, ciGlyph } from "./mode.ts";
 import { type RailKey, keymapBar, orderSourceLabel, priorityChip, workbenchProgressBar } from "./rail.ts";
 import { type RenderedRow, type Span, defaultExpanded, findSpan, hasChildren, renderSpanTree, visibleSpanIds } from "./trace.ts";
 import { fitToWidth, truncateToWidth, visibleWidth } from "./width.ts";
-import { PrDetailCache, issueDetailToLines, prDetailToLines, sanitizeMarkdown, type PrDetail, type IssueDetail } from "./reader.ts";
+import { DetailCache, issueDetailToLines, prDetailToLines, sanitizeMarkdown, type PrDetail, type IssueDetail } from "./reader.ts";
 import { fetchIssueDetail, fetchPrDetail } from "./github.ts";
 export type DashboardAction =
 	| { kind: "close" }
@@ -57,6 +57,32 @@ export const DASHBOARD_KEYS: readonly RailKey[] = [
 	{ chord: "/", label: "filter" },
 	{ chord: "q", label: "close" },
 ];
+
+/**
+ * The chords the reader's own key bar draws, and the only ones a click on that
+ * bar can raise. The issue reader has no reply surface, so it advertises only
+ * actions it can perform (issue #611): never one that silently rejects the row.
+ */
+export function readerRailKeys(isIssue: boolean): readonly RailKey[] {
+	return isIssue
+		? [
+			{ chord: "j/k", label: "scroll" },
+			{ chord: "ctrl+d/u", label: "page" },
+			{ chord: "n/p", label: "next/prev" },
+			{ chord: "u", label: "refresh" },
+			{ chord: "o", label: "browser" },
+			{ chord: "q/esc", label: "back" },
+		]
+		: [
+			{ chord: "j/k", label: "scroll" },
+			{ chord: "ctrl+d/u", label: "page" },
+			{ chord: "n/p", label: "next/prev" },
+			{ chord: "u", label: "refresh" },
+			{ chord: "c", label: "reply" },
+			{ chord: "o", label: "browser" },
+			{ chord: "q/esc", label: "back" },
+		];
+}
 
 const HELP: readonly string[] = [
 	"HIVE WORKBENCH",
@@ -176,8 +202,8 @@ export class ReviewDashboard {
 	private readerLoading = false;
 	private readerError = "";
 	private readerRequestGeneration = 0;
-	private prDetailCache = new PrDetailCache(50);
-	private readonly issueDetailCache = new PrDetailCache<IssueDetail>(50);
+	private prDetailCache = new DetailCache(50);
+	private readonly issueDetailCache = new DetailCache<IssueDetail>(50);
 
 	private readonly tui: TuiLike;
 	private readonly painter: Painter;
@@ -307,14 +333,21 @@ export class ReviewDashboard {
 		const width = this.lastWidth || 120;
 		const bodyHeight = Math.max(4, this.rows - 4);
 
-		// The reader paints over the header rail and both panes, so a click there
-		// lands on reader text, not on the rows underneath. Without this guard a
-		// click moved the queue cursor (and the header chord toggled the queue
-		// between pull requests and issues) under an open reader, leaving a detail
-		// of one type to render through the other type's formatter. The keymap,
-		// filter, and status rows still dispatch, and every key they raise goes
-		// through the reader's own guard in executeKey.
-		if (this.showReader && row < 2 + bodyHeight) {
+		// The reader paints the whole frame, so a click anywhere in it lands on
+		// reader text, not on the rows underneath. Without this guard a click moved
+		// the queue cursor (and the header chord toggled the queue between pull
+		// requests and issues) under an open reader, leaving a detail of one type
+		// to render through the other type's formatter. The one live row is the
+		// reader's own key bar: render pads the lines array (which already holds
+		// the two header rows) to `bodyHeight` and then pushes the bar, so the bar
+		// is screen row `bodyHeight` and it dispatches through the reader's chords
+		// — never the queue's DASHBOARD_KEYS geometry, which belongs to rows the
+		// reader does not draw. With no row selected the reader paints nothing, so
+		// the guard stands down and the queue frame underneath takes the click.
+		if (this.showReader && this.mode.selected()) {
+			if (row === bodyHeight) {
+				this.handleReaderKeymapClick(col);
+			}
 			return;
 		}
 
@@ -386,6 +419,7 @@ export class ReviewDashboard {
 		// The wheel scrolls whatever the reader shows, rather than moving the queue
 		// cursor out from under it.
 		if (this.showReader) {
+			this.syncReaderToSelection();
 			this.readerScroll = Math.max(0, this.readerScroll + direction);
 			this.tui.requestRender();
 			return;
@@ -571,20 +605,66 @@ export class ReviewDashboard {
 	}
 
 	private handleKeymapClick(col: number, _width: number): void {
+		const hit = this.chordAt(col, DASHBOARD_KEYS);
+		if (!hit) return;
+		this.triggerChordAction(hit.chord, col, hit.startCol, hit.chordWidth);
+	}
+
+	/**
+	 * The chord a click at `col` lands on, for a key bar drawn by ``keymapBar``:
+	 * a two-cell branch glyph plus a space, then `chord label` items separated by
+	 * a three-cell dot. Shared so the reader's bar and the queue's bar cannot
+	 * drift apart from the geometry either one renders with.
+	 */
+	private chordAt(col: number, keys: readonly RailKey[]): { chord: string; startCol: number; chordWidth: number } | undefined {
 		let currentOffset = 3;
-		for (const key of DASHBOARD_KEYS) {
+		for (const key of keys) {
 			const chordWidth = visibleWidth(key.chord);
 			const labelWidth = visibleWidth(key.label);
 			const itemWidth = chordWidth + 1 + labelWidth;
 			const startCol = currentOffset;
-			const endCol = currentOffset + itemWidth;
-			const nextOffset = endCol + 3;
+			const nextOffset = startCol + itemWidth + 3;
 
 			if (col >= startCol && col < nextOffset) {
-				this.triggerChordAction(key.chord, col, startCol, chordWidth);
-				return;
+				return { chord: key.chord, startCol, chordWidth };
 			}
 			currentOffset = nextOffset;
+		}
+		return undefined;
+	}
+
+	/**
+	 * Dispatch a click on the reader's own key bar. The bar advertises chords the
+	 * queue bar does not have, so it dispatches through the reader's key list and
+	 * raises the same keys a keypress would — every one of them still passes the
+	 * reader's guard in executeKey.
+	 */
+	private handleReaderKeymapClick(col: number): void {
+		const item = this.mode.selected();
+		if (!item) return;
+		const hit = this.chordAt(col, readerRailKeys(item.type === "issue"));
+		if (!hit) return;
+		const firstHalf = col < hit.startCol + Math.floor(hit.chordWidth / 2);
+		switch (hit.chord) {
+			case "j/k":
+				this.executeKey(firstHalf ? "j" : "k");
+				return;
+			case "ctrl+d/u":
+				this.executeKey(firstHalf ? "ctrl+d" : "ctrl+u");
+				return;
+			case "n/p":
+				this.executeKey(firstHalf ? "n" : "p");
+				return;
+			case "q/esc":
+				this.executeKey("q");
+				return;
+			case "u":
+			case "c":
+			case "o":
+				this.executeKey(hit.chord);
+				return;
+			default:
+				return;
 		}
 	}
 
@@ -690,11 +770,7 @@ export class ReviewDashboard {
 			// An external queue refresh can drop the row the reader loaded and move
 			// the selection under it. Reload first so no key acts on another row's
 			// text, and so the render never has to hold a stale detail for long.
-			const selected = this.mode.selected();
-			if (selected && this.readerDetailKey !== this.readerIdentity(selected)) {
-				this.readerScroll = 0;
-				this.loadSelectedReaderDetail();
-			}
+			this.syncReaderToSelection();
 			const pageStep = Math.max(1, this.rows - 4);
 			if (key === "escape" || key === "q") {
 				this.showReader = false;
@@ -919,6 +995,23 @@ export class ReviewDashboard {
 	 */
 	private readerIdentity(item: QueueItem): string {
 		return `${item.type}:${item.repo}#${item.id}`;
+	}
+
+	/**
+	 * Bind the reader back to the row under it after something else moved the
+	 * selection (an external queue refresh drops rows). Returns true when a
+	 * reload was started. Every surface that can observe a stale reader — keys,
+	 * the wheel, and the render itself — calls this, so the reader never sits on
+	 * the loading surface with no fetch in flight waiting for a keypress.
+	 */
+	private syncReaderToSelection(): boolean {
+		if (!this.showReader) return false;
+		const item = this.mode.selected();
+		if (!item) return false;
+		if (this.readerDetailKey === this.readerIdentity(item)) return false;
+		this.readerScroll = 0;
+		this.loadSelectedReaderDetail();
+		return true;
 	}
 
 	/** Load the selected item's reading surface through its object-detail cache. */
@@ -1335,7 +1428,9 @@ export class ReviewDashboard {
 			// A detail loaded for another row — above all, one of the other type —
 			// must never reach this row's formatter. Anything that moved the
 			// selection out from under the reader (an external queue refresh) shows
-			// the loading surface until the reload for this row lands.
+			// the loading surface, and the reload for this row is already in flight
+			// by the time that surface is painted.
+			this.syncReaderToSelection();
 			const stale = this.readerDetailKey !== this.readerIdentity(item);
 			const detail = stale ? undefined : (this.readerDetail as PrDetail | IssueDetail | undefined);
 			const readerError = stale ? "" : this.readerError;
@@ -1366,27 +1461,7 @@ export class ReviewDashboard {
 				lines.push(truncateToWidth(this.painter.fg("text", line), width));
 			}
 			while (lines.length < bodyHeight) lines.push("");
-			// The issue reader has no reply surface, so it advertises only actions it
-			// can perform (issue #611): never one that silently rejects the row.
-			const readerKeys: RailKey[] = isIssue
-				? [
-					{ chord: "j/k", label: "scroll" },
-					{ chord: "ctrl+d/u", label: "page" },
-					{ chord: "n/p", label: "next/prev" },
-					{ chord: "u", label: "refresh" },
-					{ chord: "o", label: "browser" },
-					{ chord: "q/esc", label: "back" },
-				]
-				: [
-					{ chord: "j/k", label: "scroll" },
-					{ chord: "ctrl+d/u", label: "page" },
-					{ chord: "n/p", label: "next/prev" },
-					{ chord: "u", label: "refresh" },
-					{ chord: "c", label: "reply" },
-					{ chord: "o", label: "browser" },
-					{ chord: "q/esc", label: "back" },
-				];
-			lines.push(keymapBar(this.painter, readerKeys, width));
+			lines.push(keymapBar(this.painter, readerRailKeys(isIssue), width));
 			return lines;
 		}
 		const traceTitle = item ? `TRACE ${item.repo}#${item.id}` : "TRACE";
