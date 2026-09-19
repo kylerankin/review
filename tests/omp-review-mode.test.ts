@@ -4428,6 +4428,55 @@ test("the reader's key bar takes clicks when the detail fills the pane", async (
 	assert.equal(action, undefined, "closing the reader by click emits no action");
 });
 
+test("a multi-line comment body does not shift the reader's key bar off its recorded row", async (t) => {
+	const rows = 24;
+	const mode = new ReviewMode({ org: "projectbluefin" });
+	mode.items = [queueItem({ id: 611, type: "issue", title: "issue rows advertise a reader", url: "https://github.com/projectbluefin/review/issues/611", headSha: undefined })];
+	mode.token = "test-token";
+	const originalFetch = globalThis.fetch;
+	globalThis.fetch = (async (url: string) => {
+		const s = String(url);
+		if (s.includes("/issues/611/comments")) {
+			return { ok: true, status: 200, statusText: "OK", json: async () => [
+				{ user: { login: "ada" }, created_at: "2026-01-01", body: "first line\nsecond line\r\nthird line" },
+			] };
+		}
+		if (s.includes("/issues/611/timeline")) {
+			return { ok: true, status: 200, statusText: "OK", json: async () => [] };
+		}
+		if (s.includes("/issues/611")) {
+			return { ok: true, status: 200, statusText: "OK", json: async () => ({ title: "issue row\nforged", body: "one\ntwo", user: { login: "ada" }, state: "open", labels: [], url: "https://github.com/projectbluefin/review/issues/611" }) };
+		}
+		return { ok: true, status: 200, statusText: "OK", json: async () => [] };
+	}) as typeof fetch;
+	t.after(() => { globalThis.fetch = originalFetch; });
+
+	let action;
+	const dashboard = new ReviewDashboard({ requestRender() {} }, PLAIN_PAINTER, mode, (result) => { action = result; }, () => {}, rows);
+	t.after(() => dashboard.dispose());
+	const frame = () => dashboard.render(200);
+
+	mode.selectById("projectbluefin/review", 611);
+	dashboard.handleInput("v");
+	await flush();
+	const lines = frame();
+	assert.ok(lines.some((r) => r.includes("second line")), "the multi-line comment is rendered");
+
+	// The click dispatch reads the bar's row as an element index, so no element
+	// may paint as more than one terminal row: a comment body carrying newlines
+	// used to push the visible bar below the row the render recorded, and every
+	// click on that bar was swallowed.
+	for (const line of lines) {
+		assert.ok(!/[\r\n]/.test(line), "no rendered element carries an embedded newline");
+	}
+	const barRow = lines.findIndex((line) => line.includes("o browser"));
+	assert.equal(barRow, rows - 1, "the key bar is the frame's last row");
+	const barText = lines[barRow];
+	dashboard.handleClick(barText.indexOf("o browser") + 1, barRow);
+	assert.equal(action?.kind, "open_browser", "the bar under a multi-line comment still takes clicks");
+	assert.equal(action?.item.id, 611, "the browser chord acts on the row the reader shows");
+});
+
 test("a queue swap under the reader reloads it without waiting for a keypress", async (t) => {
 	const mode = new ReviewMode({ org: "projectbluefin" });
 	mode.items = [queueItem({ id: 42, type: "pr", headSha: "c".repeat(40) })];

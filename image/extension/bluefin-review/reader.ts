@@ -151,6 +151,17 @@ export class DetailCache<T = PrDetail> {
 }
 
 /**
+ * Split sanitized remote text into one element per painted terminal row.
+ * sanitizeMarkdown keeps CR and LF, and the reader paints one element per row
+ * while recording the key-bar row as `lines.length`, so an element holding an
+ * embedded newline would push the visible bar below the recorded row and make
+ * clicks on that bar land on comment text instead.
+ */
+function toRows(value: string): string[] {
+	return value.split(/\r\n|[\n\r]/);
+}
+
+/**
  * Render a cached PR detail as readable lines for the reader pane (issue #547).
  * The body and each conversation comment / review summary are sanitized so
  * remote content cannot inject terminal controls, HTML, or shell through the
@@ -162,7 +173,7 @@ export function prDetailToLines(detail: PrDetail | undefined): string[] {
 	const inline = (value: string): string => sanitizeMarkdown(value).replace(/[\r\n]+/g, " ").trim();
 	const body = sanitizeMarkdown(detail.body);
 	if (body) {
-		lines.push(...body.split("\n"));
+		lines.push(...toRows(body));
 	} else {
 		lines.push("_(no description)_");
 	}
@@ -174,7 +185,11 @@ export function prDetailToLines(detail: PrDetail | undefined): string[] {
 			const stamp = comment.createdAt ? ` · ${inline(comment.createdAt)}` : "";
 			lines.push(`${who}${stamp}`);
 			const bodyText = sanitizeMarkdown(comment.body);
-			lines.push(bodyText ? bodyText : "_(comment)_");
+			if (bodyText) {
+				lines.push(...toRows(bodyText));
+			} else {
+				lines.push("_(comment)_");
+			}
 			lines.push("");
 		}
 	} else {
@@ -189,7 +204,11 @@ export function prDetailToLines(detail: PrDetail | undefined): string[] {
 			lines.push(`[${state}] ${who}`);
 			if (review.body) {
 				const bodyText = sanitizeMarkdown(review.body);
-				lines.push(bodyText ? bodyText : "_(no body)_");
+				if (bodyText) {
+					lines.push(...toRows(bodyText));
+				} else {
+					lines.push("_(no body)_");
+				}
 				lines.push("");
 			}
 		}
@@ -203,7 +222,7 @@ export function issueDetailToLines(detail: IssueDetail | undefined): string[] {
 	const inline = (value: string): string => sanitizeMarkdown(value).replace(/[\r\n]+/g, " ").trim();
 	const body = sanitizeMarkdown(detail.body);
 	if (body) {
-		lines.push(...body.split("\n"));
+		lines.push(...toRows(body));
 	} else {
 		lines.push("_(no description)_");
 	}
@@ -215,7 +234,11 @@ export function issueDetailToLines(detail: IssueDetail | undefined): string[] {
 			const stamp = comment.createdAt ? ` · ${inline(comment.createdAt)}` : "";
 			lines.push(`${who}${stamp}`);
 			const bodyText = sanitizeMarkdown(comment.body);
-			lines.push(bodyText ? bodyText : "_(comment)_");
+			if (bodyText) {
+				lines.push(...toRows(bodyText));
+			} else {
+				lines.push("_(comment)_");
+			}
 			lines.push("");
 		}
 	} else {

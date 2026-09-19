@@ -384,3 +384,40 @@ test("fetchIssueDetail fails closed on the issue read but tolerates a missing ti
 	assert.equal(tolerated.detail?.title, "issue reader");
 	assert.equal(tolerated.detail?.linkedPullRequests.length, 0, "no linked PRs when the timeline is unavailable");
 });
+
+test("detail formatters emit one element per painted row for multi-line bodies", () => {
+	const prLines = prDetailToLines({
+		repo: "projectbluefin/review",
+		number: 547,
+		headSha: "a".repeat(40),
+		title: "PR reader",
+		body: "intro\nbody",
+		author: "jorge",
+		comments: [{ author: "ada", createdAt: "2026-01-01", body: "first\nsecond\r\nthird" }],
+		reviews: [{ author: "carol", state: "APPROVED", body: "looks\r\ngood" }],
+	});
+	for (const line of prLines) {
+		assert.ok(!/[\r\n]/.test(line), "no PR reader element carries an embedded newline");
+	}
+	assert.ok(prLines.includes("second"), "the comment's second line becomes its own element");
+	assert.ok(prLines.includes("third"), "a CRLF comment line becomes its own element");
+	assert.ok(prLines.includes("good"), "a multi-line review body is split too");
+
+	const issueLines = issueDetailToLines({
+		repo: "projectbluefin/review",
+		number: 611,
+		title: "issue reader",
+		state: "open",
+		body: "intro\nbody",
+		author: "ada",
+		labels: [],
+		comments: [{ author: "bob", createdAt: "2026-01-02", body: "first\nsecond\r\nthird" }],
+		linkedPullRequests: [],
+		url: "https://github.com/projectbluefin/review/issues/611",
+	});
+	for (const line of issueLines) {
+		assert.ok(!/[\r\n]/.test(line), "no issue reader element carries an embedded newline");
+	}
+	assert.ok(issueLines.includes("second"), "the issue comment's second line becomes its own element");
+	assert.ok(issueLines.includes("third"), "a CRLF issue comment line becomes its own element");
+});

@@ -1445,21 +1445,25 @@ export class ReviewDashboard {
 			const detail = stale ? undefined : (this.readerDetail as PrDetail | IssueDetail | undefined);
 			const readerError = stale ? "" : this.readerError;
 			const readerLoading = stale ? true : this.readerLoading;
-			lines.push(this.painter.bold(this.painter.fg("accent", `${isIssue ? "ISSUE READER" : "PR READER"}: ${item.repo}#${item.id} — ${sanitizeMarkdown(item.title)}`)));
+			// Every row this branch pushes must paint as exactly one terminal row:
+			// the recorded `readerKeymapRow` is an element index, so an embedded
+			// newline anywhere above the bar would move the bar the user sees.
+			const flat = (value: string): string => sanitizeMarkdown(value).replace(/[\r\n]+/g, " ");
+			lines.push(this.painter.bold(this.painter.fg("accent", `${isIssue ? "ISSUE READER" : "PR READER"}: ${item.repo}#${item.id} — ${flat(item.title)}`)));
 			const labels = (isIssue && detail ? (detail as IssueDetail).labels : undefined) ?? item.labels;
 			const stateText = (isIssue && detail ? (detail as IssueDetail).state : undefined) ?? "unknown";
 			const meta = isIssue
-				? `Author: @${sanitizeMarkdown(item.author)} · State: ${sanitizeMarkdown(stateText)} · Labels: ${(labels as string[]).map(sanitizeMarkdown).join(", ") || "none"} · URL: ${item.url}`
-				: `Author: @${sanitizeMarkdown(item.author)} · Head: ${item.headSha ? item.headSha.slice(0, 7) : "unknown"} · URL: ${item.url}`;
+				? `Author: @${flat(item.author)} · State: ${flat(stateText)} · Labels: ${(labels as string[]).map(flat).join(", ") || "none"} · URL: ${flat(item.url)}`
+				: `Author: @${flat(item.author)} · Head: ${item.headSha ? item.headSha.slice(0, 7) : "unknown"} · URL: ${flat(item.url)}`;
 			lines.push(this.painter.fg("dim", meta));
 			lines.push(this.painter.fg("border", "─".repeat(width)));
 			if (!isIssue) {
-				lines.push(truncateToWidth(this.painter.fg("dim", `Status: ${item.reviewState} · CI: ${item.ciStatus ?? "none"}`), width));
+				lines.push(truncateToWidth(this.painter.fg("dim", `Status: ${flat(item.reviewState)} · CI: ${flat(item.ciStatus ?? "none")}`), width));
 			}
 			const detailLines = isIssue ? issueDetailToLines(detail as IssueDetail | undefined) : prDetailToLines(detail as PrDetail | undefined);
 			let linesToShow = detailLines;
 			if (readerError) {
-				linesToShow = [`(could not read ${isIssue ? "issue" : "PR"}: ${readerError})`];
+				linesToShow = [`(could not read ${isIssue ? "issue" : "PR"}: ${flat(readerError)})`];
 			} else if (readerLoading) {
 				linesToShow = isIssue
 					? ["(loading description, conversation, and linked pull requests…)"]
