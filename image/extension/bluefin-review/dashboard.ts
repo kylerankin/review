@@ -720,6 +720,11 @@ export class ReviewDashboard {
 				if (item) this.emitAction({ kind: "open_browser", item });
 				return;
 			}
+			// The issue reader's key bar advertises no reply or work surface, so it
+			// swallows every other key instead of letting the queue switch below fire
+			// an action it never offered — 'c' must not post a comment from here
+			// (issue #611). The PR reader still falls through for its advertised 'c'.
+			if (this.mode.selected()?.type === "issue") return;
 		}
 
 		switch (key) {

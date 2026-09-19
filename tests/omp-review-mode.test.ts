@@ -4218,10 +4218,55 @@ test("the issue reader renders a populated issue without touching the PR diff", 
 
 	// Refreshing re-fetches and keeps the issue reader populated (not the stale
 	// loading state), proving the issue detail cache is wired like the PR cache.
+	// 'u' is the refresh the reader's own key bar advertises.
 	mode.selectById("projectbluefin/review", 611);
-	dashboard.handleInput("r");
+	dashboard.handleInput("u");
 	await flush();
 	assert.ok(frameAfter(dashboard).some((r) => r.includes("Adds an issue reader.")), "refreshing the issue keeps the issue reader cached");
+});
+
+test("issue rows open the reader by click, and the issue reader fires no key its rail never advertises", (t) => {
+	const mode = new ReviewMode({ org: "projectbluefin" });
+	mode.items = [
+		queueItem({ id: 611, type: "issue", title: "issue rows advertise a reader", url: "https://github.com/projectbluefin/review/issues/611" }),
+		queueItem({ id: 42, type: "pr", title: "fix(launcher): resolve HIVE_HUB before mutating", url: "https://github.com/projectbluefin/review/pull/42" }),
+	];
+	let action;
+	const dashboard = new ReviewDashboard({ requestRender() {} }, PLAIN_PAINTER, mode, (result) => { action = result; }, () => {}, 160);
+	t.after(() => dashboard.dispose());
+	const frame = () => dashboard.render(400);
+
+	// Clicking the issue row selects it through the same hit testing PRs use.
+	const issueRow = frame().findIndex((line) => line.includes("#611"));
+	assert.ok(issueRow > 0, "the issue row is rendered");
+	dashboard.handleClick(15, issueRow);
+	assert.equal(mode.selected().id, 611, "clicking an issue row selects it");
+
+	// Clicking the 'v' chord opens the issue reader, same as the keystroke.
+	const keymapIdx = frame().findIndex((line) => line.includes("v read"));
+	assert.ok(keymapIdx > 0, "the queue key bar advertises the reader");
+	const keymapText = frame()[keymapIdx];
+	const vPos = keymapText.indexOf("v read");
+	dashboard.handleClick(vPos + 1, keymapIdx);
+	assert.ok(frame().some((r) => r.includes("ISSUE READER: projectbluefin/review#611")), "clicking read opens the issue reader");
+	assert.equal(action, undefined, "opening the reader by click starts no agent turn or mutation");
+
+	// The issue reader's rail offers no reply, so 'c' — by key or by a click on
+	// the comment chord — must not emit a comment action (issue #611).
+	dashboard.handleInput("c");
+	assert.equal(action, undefined, "'c' in the issue reader emits no comment action");
+	const cPos = keymapText.indexOf("c comment");
+	assert.ok(cPos > 0, "the queue key bar carries a comment chord");
+	dashboard.handleClick(cPos + 1, keymapIdx);
+	assert.equal(action, undefined, "clicking comment while the issue reader is open emits nothing");
+
+	// The PR reader does advertise a reply, so 'c' still emits there.
+	dashboard.handleInput("q");
+	mode.selectById("projectbluefin/review", 42);
+	dashboard.handleInput("v");
+	assert.ok(frame().some((r) => r.includes("PR READER: projectbluefin/review#42")), "the PR row still opens the PR reader");
+	dashboard.handleInput("c");
+	assert.equal(action?.kind, "comment", "'c' in the PR reader still emits the reply its rail advertises");
 });
 
 const frameAfter = (dashboard: { render: (w: number) => string[] }) => dashboard.render(160);

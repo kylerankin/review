@@ -889,19 +889,43 @@ export function diffToText(diff: DiffResult): string {
 const NO_COMMENTS: PrComment[] = [];
 const NO_REVIEWS: PrReview[] = [];
 
+/** The raw REST payload shapes the PR and issue readers parse. */
+interface PullPayload {
+	title?: string;
+	body?: string | null;
+	user?: { login?: string } | null;
+	head?: { sha?: string };
+}
+
+interface ReviewPayload {
+	user?: { login?: string } | null;
+	state?: string;
+	body?: string | null;
+}
+
+interface IssuePayload {
+	title?: string;
+	body?: string | null;
+	user?: { login?: string } | null;
+	state?: string;
+	labels?: Array<{ name?: string }> | null;
+	url?: string;
+}
+
+interface CommentPayload {
+	user?: { login?: string } | null;
+	created_at?: string;
+	body?: string | null;
+}
+
 /** Map the raw REST payloads for a pull request into a `PrDetail` (issue #547). */
 export function parsePrDetail(
 	repo: string,
 	number: number,
 	headSha: string,
-	pull: Partial<{
-		title?: string;
-		body?: string | null;
-		user?: { login?: string } | null;
-		head?: { sha?: string };
-	}>,
-	comments: ReadonlyArray<Partial<{ user?: { login?: string } | null; created_at?: string; body?: string | null }>> = [],
-	reviews: ReadonlyArray<Partial<{ user?: { login?: string } | null; state?: string; body?: string | null }>> = [],
+	pull: PullPayload,
+	comments: ReadonlyArray<CommentPayload> = [],
+	reviews: ReadonlyArray<ReviewPayload> = [],
 ): PrDetail {
 	const conversation: PrComment[] = comments.slice(0, 50).map((comment) => ({
 		author: comment.user?.login || "?",
@@ -931,6 +955,34 @@ export interface PrDetailResult {
 	cancelled?: boolean;
 }
 
+/** One bounded REST read, with transport and status failures returned as errors. */
+type JsonReader = <T>(url: string) => Promise<{ payload?: T; error?: string }>;
+
+/**
+ * Build the bounded JSON reader the reader-surface fetches share, so the PR and
+ * issue readers cannot drift apart on redirects, status handling, or how a
+ * cancellation is reported.
+ */
+function jsonReader(
+	doFetch: typeof fetch,
+	token: string,
+	deadline: AbortSignal,
+	signal?: AbortSignal,
+): JsonReader {
+	return async <T>(url: string): Promise<{ payload?: T; error?: string }> => {
+		try {
+			const response = await doFetch(url, { headers: headers(token), signal: deadline, redirect: "error" });
+			if (!response.ok) {
+				return { error: `GitHub REST ${response.status} ${response.statusText}` };
+			}
+			return { payload: (await response.json()) as T };
+		} catch (error) {
+			if (signal?.aborted) return { error: "cancelled" };
+			return { error: error instanceof Error ? error.message : String(error) };
+		}
+	};
+}
+
 /**
  * Fetch the reading surface of one pull request: its body, conversation
  * comments, and top-level reviews, for the PR Reader (issue #547).
@@ -952,28 +1004,17 @@ export async function fetchPrDetail(
 		return { detail: undefined, error: "no GitHub credential (set GH_TOKEN or run gh auth login)" };
 	}
 	const deadline = deadlineSignal(options.timeoutMs ?? 15_000, signal);
-	const readJson = async <T>(url: string): Promise<{ payload?: T; error?: string }> => {
-		try {
-			const response = await doFetch(url, { headers: headers(token), signal: deadline, redirect: "error" });
-			if (!response.ok) {
-				return { error: `GitHub REST ${response.status} ${response.statusText}` };
-			}
-			return { payload: (await response.json()) as T };
-		} catch (error) {
-			if (signal?.aborted) return { error: "cancelled" };
-			return { error: error instanceof Error ? error.message : String(error) };
-		}
-	};
+	const readJson = jsonReader(doFetch, token, deadline, signal);
 
 	const base = `https://api.github.com/repos/${repo}`;
 	const [pull, comments, reviews] = await Promise.all([
-		readJson<{ title?: string; body?: string | null; user?: { login?: string } | null; head?: { sha?: string } }>(
+		readJson<PullPayload>(
 			`${base}/pulls/${pullRequest}`,
 		),
-		readJson<Array<{ user?: { login?: string } | null; created_at?: string; body?: string | null }>>(
+		readJson<CommentPayload[]>(
 			`${base}/issues/${pullRequest}/comments?per_page=100`,
 		),
-		readJson<Array<{ user?: { login?: string } | null; state?: string; body?: string | null }>>(
+		readJson<ReviewPayload[]>(
 			`${base}/pulls/${pullRequest}/reviews?per_page=100`,
 		),
 	]);
@@ -998,21 +1039,6 @@ export async function fetchPrDetail(
 			reviews.payload,
 		),
 	};
-}
-
-interface IssuePayload {
-	title?: string;
-	body?: string | null;
-	user?: { login?: string } | null;
-	state?: string;
-	labels?: Array<{ name?: string }> | null;
-	url?: string;
-}
-
-interface CommentPayload {
-	user?: { login?: string } | null;
-	created_at?: string;
-	body?: string | null;
 }
 
 /** One cross-referenced timeline event naming a pull request linked to the issue. */
@@ -1107,28 +1133,17 @@ export async function fetchIssueDetail(
 		return { detail: undefined, error: "no GitHub credential (set GH_TOKEN or run gh auth login)" };
 	}
 	const deadline = deadlineSignal(options.timeoutMs ?? 15_000, signal);
-	const readJson = async <T>(url: string): Promise<{ payload?: T; error?: string }> => {
-		try {
-			const response = await doFetch(url, { headers: headers(token), signal: deadline, redirect: "error" });
-			if (!response.ok) {
-				return { error: `GitHub REST ${response.status} ${response.statusText}` };
-			}
-			return { payload: (await response.json()) as T };
-		} catch (error) {
-			if (signal?.aborted) return { error: "cancelled" };
-			return { error: error instanceof Error ? error.message : String(error) };
-		}
-	};
+	const readJson = jsonReader(doFetch, token, deadline, signal);
 
 	const base = `https://api.github.com/repos/${repo}`;
 	const [issue, comments, timeline] = await Promise.all([
-		readJson<{ title?: string; body?: string | null; user?: { login?: string } | null; state?: string; labels?: Array<{ name?: string }> | null; url?: string }>(
+		readJson<IssuePayload>(
 			`${base}/issues/${issueNumber}`,
 		),
-		readJson<Array<{ user?: { login?: string } | null; created_at?: string; body?: string | null }>>(
+		readJson<CommentPayload[]>(
 			`${base}/issues/${issueNumber}/comments?per_page=100`,
 		),
-		readJson<Array<Record<string, unknown>>>(
+		readJson<TimelineEvent[]>(
 			`${base}/issues/${issueNumber}/timeline?filter=all&per_page=100`,
 		),
 	]);
