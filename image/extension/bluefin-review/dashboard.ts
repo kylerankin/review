@@ -195,6 +195,13 @@ export class ReviewDashboard {
 	private queueRowItems: (number | "divider")[] = [];
 	private traceRowSpans: (string | "hive" | undefined)[] = [];
 	private showReader = false;
+	/**
+	 * Screen row the reader's key bar was last drawn on, or -1 when the reader
+	 * drew no bar. Recorded by render, like `queueRowItems` and `traceRowSpans`,
+	 * because the row moves with the detail: a short detail is padded down to the
+	 * bar, a full one reaches it on its own.
+	 */
+	private readerKeymapRow = -1;
 	private readerScroll = 0;
 	private readerDetail: PrDetail | IssueDetail | undefined;
 	/** Row identity (type included) the loaded reader state belongs to. */
@@ -338,14 +345,16 @@ export class ReviewDashboard {
 		// the queue cursor (and the header chord toggled the queue between pull
 		// requests and issues) under an open reader, leaving a detail of one type
 		// to render through the other type's formatter. The one live row is the
-		// reader's own key bar: render pads the lines array (which already holds
-		// the two header rows) to `bodyHeight` and then pushes the bar, so the bar
-		// is screen row `bodyHeight` and it dispatches through the reader's chords
-		// — never the queue's DASHBOARD_KEYS geometry, which belongs to rows the
-		// reader does not draw. With no row selected the reader paints nothing, so
-		// the guard stands down and the queue frame underneath takes the click.
+		// reader's own key bar, on the row render recorded rather than a row this
+		// handler recomputes: only a short detail is padded down to a fixed row,
+		// and a detail that fills the pane used to leave the visible bar dead
+		// while reader text took the chord for its column. The bar dispatches
+		// through the reader's chords — never the queue's DASHBOARD_KEYS geometry,
+		// which belongs to rows the reader does not draw. With no row selected the
+		// reader paints nothing, so the guard stands down and the queue frame
+		// underneath takes the click.
 		if (this.showReader && this.mode.selected()) {
-			if (row === bodyHeight) {
+			if (this.readerKeymapRow >= 0 && row === this.readerKeymapRow) {
 				this.handleReaderKeymapClick(col);
 			}
 			return;
@@ -1412,6 +1421,7 @@ export class ReviewDashboard {
 		this.lastWidth = width;
 		const now = Date.now();
 		const lines: string[] = [this.headerRow(width, now), this.painter.fg("border", "─".repeat(width))];
+		this.readerKeymapRow = -1;
 
 		if (this.showHelp) {
 			lines.push(this.painter.bold(this.painter.fg("accent", "HIVE WORKBENCH")));
@@ -1455,12 +1465,20 @@ export class ReviewDashboard {
 					? ["(loading description, conversation, and linked pull requests…)"]
 					: ["(loading description and conversation…)"];
 			}
-			const available = Math.max(2, bodyHeight - 2);
+			// The reader's frame ends on the terminal's last row, the same row the
+			// queue frame's status bar ends on, so the bar the user sees is the bar
+			// this render recorded. Budgeting the detail against the header rows
+			// already pushed keeps the bar on screen: a fixed `bodyHeight - 2`
+			// ignored the reader's own header rows, so the PR reader drew one row
+			// past the terminal and scrolled its bar out of the frame.
+			const barRow = Math.max(lines.length, this.rows - 1);
+			const available = Math.max(1, barRow - lines.length);
 			const slice = linesToShow.slice(this.readerScroll, this.readerScroll + available);
 			for (const line of slice) {
 				lines.push(truncateToWidth(this.painter.fg("text", line), width));
 			}
-			while (lines.length < bodyHeight) lines.push("");
+			while (lines.length < barRow) lines.push("");
+			this.readerKeymapRow = lines.length;
 			lines.push(keymapBar(this.painter, readerRailKeys(isIssue), width));
 			return lines;
 		}

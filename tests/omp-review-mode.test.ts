@@ -4356,6 +4356,78 @@ test("a click on the reader's own key bar fires the chord it advertises", (t) =>
 	assert.equal(action, undefined, "closing the reader by click emits no action");
 });
 
+test("the reader's key bar takes clicks when the detail fills the pane", async (t) => {
+	const rows = 24;
+	const body = Array.from({ length: 80 }, (_, i) => `detail line ${i}`).join("\n");
+	const mode = new ReviewMode({ org: "projectbluefin" });
+	mode.items = [queueItem({ id: 611, type: "issue", title: "issue rows advertise a reader", url: "https://github.com/projectbluefin/review/issues/611", headSha: undefined })];
+	mode.token = "test-token";
+	const originalFetch = globalThis.fetch;
+	globalThis.fetch = (async (url: string) => {
+		const s = String(url);
+		if (s.includes("/issues/611/comments") || s.includes("/issues/611/timeline")) {
+			return { ok: true, status: 200, statusText: "OK", json: async () => [] };
+		}
+		if (s.includes("/issues/611")) {
+			return { ok: true, status: 200, statusText: "OK", json: async () => ({ title: "issue row", body, user: { login: "ada" }, state: "open", labels: [], url: "https://github.com/projectbluefin/review/issues/611" }) };
+		}
+		if (s.includes("/pulls/42") && !s.includes("/reviews")) {
+			return { ok: true, status: 200, statusText: "OK", json: async () => ({ title: "PR reader", body, user: { login: "jorge" }, head: { sha: "c".repeat(40) } }) };
+		}
+		return { ok: true, status: 200, statusText: "OK", json: async () => [] };
+	}) as typeof fetch;
+	t.after(() => { globalThis.fetch = originalFetch; });
+
+	let action;
+	const dashboard = new ReviewDashboard({ requestRender() {} }, PLAIN_PAINTER, mode, (result) => { action = result; }, () => {}, rows);
+	t.after(() => dashboard.dispose());
+	const frame = () => dashboard.render(200);
+
+	mode.selectById("projectbluefin/review", 611);
+	dashboard.handleInput("v");
+	await flush();
+	assert.ok(frame().some((r) => r.includes("detail line 0")), "the issue reader is populated");
+
+	// A detail long enough to fill the pane leaves nothing to pad, so the bar is
+	// wherever that detail ends — not the row a short detail is padded down to.
+	// The frame still ends on the terminal's last row, so the bar the user clicks
+	// is the bar the reader drew.
+	let lines = frame();
+	assert.equal(lines.length, rows, "the full issue reader frame fits the terminal");
+	let barRow = lines.findIndex((line) => line.includes("o browser"));
+	assert.equal(barRow, rows - 1, "the issue reader's key bar is the frame's last row");
+	let barText = lines[barRow];
+	dashboard.handleClick(barText.indexOf("o browser") + 1, barRow);
+	assert.equal(action?.kind, "open_browser", "clicking the bar under a full detail opens the row in a browser");
+	assert.equal(action?.item.id, 611, "the browser chord acts on the row the reader shows");
+
+	// Reader text is not a key bar: the row a short detail's bar would occupy
+	// carries detail lines here, and clicking it must raise no chord at all.
+	action = undefined;
+	const textRow = Math.max(4, rows - 4);
+	assert.ok(frame()[textRow].includes("detail line"), "the padded-frame bar row holds reader text under a full detail");
+	dashboard.handleClick(barText.indexOf("q/esc") + 1, textRow);
+	assert.equal(action, undefined, "clicking reader text raises no chord");
+	assert.ok(frame().some((r) => r.includes("ISSUE READER: projectbluefin/review#611")), "clicking reader text does not close the reader");
+
+	// The PR reader draws one more header row than the issue reader, so its bar
+	// sits on a different line again — and still takes the click.
+	dashboard.handleInput("q");
+	mode.items = [queueItem({ id: 42, type: "pr", headSha: "c".repeat(40) })];
+	mode.selectById("projectbluefin/review", 42);
+	dashboard.handleInput("v");
+	await flush();
+	lines = frame();
+	assert.ok(lines.some((r) => r.includes("detail line 0")), "the PR reader is populated");
+	assert.equal(lines.length, rows, "the full PR reader frame fits the terminal");
+	barRow = lines.findIndex((line) => line.includes("o browser"));
+	assert.equal(barRow, rows - 1, "the PR reader's key bar is the frame's last row");
+	barText = lines[barRow];
+	dashboard.handleClick(barText.indexOf("q/esc") + 1, barRow);
+	assert.ok(!frame().some((r) => r.includes("PR READER")), "clicking back under a full detail closes the PR reader");
+	assert.equal(action, undefined, "closing the reader by click emits no action");
+});
+
 test("a queue swap under the reader reloads it without waiting for a keypress", async (t) => {
 	const mode = new ReviewMode({ org: "projectbluefin" });
 	mode.items = [queueItem({ id: 42, type: "pr", headSha: "c".repeat(40) })];
