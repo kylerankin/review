@@ -4269,4 +4269,53 @@ test("issue rows open the reader by click, and the issue reader fires no key its
 	assert.equal(action?.kind, "comment", "'c' in the PR reader still emits the reply its rail advertises");
 });
 
+test("the reader never renders a detail of one type through the other type's formatter", async (t) => {
+	const mode = new ReviewMode({ org: "projectbluefin" });
+	mode.items = [queueItem({ id: 42, type: "pr", headSha: "c".repeat(40) })];
+	mode.token = "test-token";
+	const originalFetch = globalThis.fetch;
+	globalThis.fetch = (async (url: string) => {
+		const s = String(url);
+		if (s.includes("/pulls/42") && !s.includes("/reviews")) {
+			return { ok: true, status: 200, statusText: "OK", json: async () => ({ title: "PR reader", body: "Resolves HIVE_HUB first.", user: { login: "jorge" }, head: { sha: "c".repeat(40) } }) };
+		}
+		if (s.includes("/comments")) return { ok: true, status: 200, statusText: "OK", json: async () => [] };
+		return { ok: true, status: 200, statusText: "OK", json: async () => [] };
+	}) as typeof fetch;
+	t.after(() => { globalThis.fetch = originalFetch; });
+
+	const dashboard = new ReviewDashboard({ requestRender() {} }, PLAIN_PAINTER, mode, () => {}, () => {}, 160);
+	t.after(() => dashboard.dispose());
+
+	mode.selectById("projectbluefin/review", 42);
+	dashboard.handleInput("v");
+	await flush();
+	assert.ok(frameAfter(dashboard).some((r) => r.includes("Resolves HIVE_HUB first.")), "the PR reader is populated");
+
+	// tab is not a reader chord: it must not toggle the queue to issues under an
+	// open PR reader, which would leave a PR detail selected by an issue row.
+	const queueModeBefore = mode.queueMode;
+	dashboard.handleInput("tab");
+	assert.equal(mode.queueMode, queueModeBefore, "tab does not toggle the queue under an open reader");
+	assert.ok(frameAfter(dashboard).some((r) => r.includes("PR READER: projectbluefin/review#42")), "the PR reader stays open");
+
+	// A click on the queue body must not move the cursor under the reader either.
+	dashboard.handleClick(15, 3);
+	assert.equal(mode.selected().id, 42, "a body click does not move the selection under an open reader");
+
+	// Even when an external queue refresh swaps the row out from under the reader,
+	// the loaded PR detail is never fed to the issue formatter: rendering that
+	// mismatch used to throw on detail.linkedPullRequests.
+	mode.items = [queueItem({ id: 611, type: "issue", title: "issue row", url: "https://github.com/projectbluefin/review/issues/611", headSha: undefined })];
+	const swapped = frameAfter(dashboard);
+	assert.ok(swapped.some((r) => r.includes("ISSUE READER: projectbluefin/review#611")), "the reader follows the swapped row");
+	assert.ok(!swapped.some((r) => r.includes("Resolves HIVE_HUB first.")), "the stale PR detail is not rendered as an issue");
+	assert.ok(swapped.some((r) => r.includes("loading description, conversation, and linked pull requests")), "the swapped row shows its own loading surface");
+
+	// The next key reloads the reader for the row now under it.
+	dashboard.handleInput("j");
+	await flush();
+	assert.ok(frameAfter(dashboard).some((r) => r.includes("ISSUE READER: projectbluefin/review#611")), "the reader reloads for the swapped row");
+});
+
 const frameAfter = (dashboard: { render: (w: number) => string[] }) => dashboard.render(160);

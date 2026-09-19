@@ -171,6 +171,8 @@ export class ReviewDashboard {
 	private showReader = false;
 	private readerScroll = 0;
 	private readerDetail: PrDetail | IssueDetail | undefined;
+	/** Row identity (type included) the loaded reader state belongs to. */
+	private readerDetailKey: string | undefined;
 	private readerLoading = false;
 	private readerError = "";
 	private readerRequestGeneration = 0;
@@ -304,6 +306,18 @@ export class ReviewDashboard {
 
 		const width = this.lastWidth || 120;
 		const bodyHeight = Math.max(4, this.rows - 4);
+
+		// The reader paints over the header rail and both panes, so a click there
+		// lands on reader text, not on the rows underneath. Without this guard a
+		// click moved the queue cursor (and the header chord toggled the queue
+		// between pull requests and issues) under an open reader, leaving a detail
+		// of one type to render through the other type's formatter. The keymap,
+		// filter, and status rows still dispatch, and every key they raise goes
+		// through the reader's own guard in executeKey.
+		if (this.showReader && row < 2 + bodyHeight) {
+			return;
+		}
+
 		const isSplit = width >= SPLIT_MIN_WIDTH;
 		const leftWidth = isSplit ? Math.floor((width - 3) / 2) : width;
 		const rightWidth = isSplit ? width - leftWidth - 3 : width;
@@ -369,6 +383,13 @@ export class ReviewDashboard {
 	}
 
 	handleWheel(direction: -1 | 1, col?: number, _row?: number): void {
+		// The wheel scrolls whatever the reader shows, rather than moving the queue
+		// cursor out from under it.
+		if (this.showReader) {
+			this.readerScroll = Math.max(0, this.readerScroll + direction);
+			this.tui.requestRender();
+			return;
+		}
 		const width = this.lastWidth || 120;
 		const isSplit = width >= SPLIT_MIN_WIDTH;
 		const leftWidth = isSplit ? Math.floor((width - 3) / 2) : width;
@@ -666,10 +687,19 @@ export class ReviewDashboard {
 
 	private executeKey(key: string): void {
 		if (this.showReader) {
+			// An external queue refresh can drop the row the reader loaded and move
+			// the selection under it. Reload first so no key acts on another row's
+			// text, and so the render never has to hold a stale detail for long.
+			const selected = this.mode.selected();
+			if (selected && this.readerDetailKey !== this.readerIdentity(selected)) {
+				this.readerScroll = 0;
+				this.loadSelectedReaderDetail();
+			}
 			const pageStep = Math.max(1, this.rows - 4);
 			if (key === "escape" || key === "q") {
 				this.showReader = false;
 				this.readerDetail = undefined;
+				this.readerDetailKey = undefined;
 				this.tui.requestRender();
 				return;
 			}
@@ -720,11 +750,14 @@ export class ReviewDashboard {
 				if (item) this.emitAction({ kind: "open_browser", item });
 				return;
 			}
-			// The issue reader's key bar advertises no reply or work surface, so it
-			// swallows every other key instead of letting the queue switch below fire
-			// an action it never offered — 'c' must not post a comment from here
-			// (issue #611). The PR reader still falls through for its advertised 'c'.
-			if (this.mode.selected()?.type === "issue") return;
+			// The reader is modal: every key it does not handle stops here instead of
+			// falling through to the queue switch. Falling through let keys such as
+			// `tab` toggle the queue under an open reader, leaving a detail of one
+			// type to render through the other type's formatter (a crash), and fired
+			// actions neither key bar advertises — 'c' must not post a comment from
+			// the issue reader (issue #611). Only the PR reader's advertised 'c'
+			// reply reaches the queue switch, and it never moves the selection.
+			if (key !== "c" || this.mode.selected()?.type !== "pr") return;
 		}
 
 		switch (key) {
@@ -879,11 +912,21 @@ export class ReviewDashboard {
 		return `${item.repo}#${item.id}`;
 	}
 
+	/**
+	 * Identity of the row a loaded reader detail belongs to. The type is part of
+	 * the identity: an issue detail and a pull-request detail render through
+	 * different formatters, so a detail must never outlive a type change.
+	 */
+	private readerIdentity(item: QueueItem): string {
+		return `${item.type}:${item.repo}#${item.id}`;
+	}
+
 	/** Load the selected item's reading surface through its object-detail cache. */
 	private loadSelectedReaderDetail(): void {
 		const item = this.mode.selected();
 		if (!item) {
 			this.readerDetail = undefined;
+			this.readerDetailKey = undefined;
 			this.readerError = "";
 			this.readerLoading = false;
 			this.tui.requestRender();
@@ -892,6 +935,7 @@ export class ReviewDashboard {
 		this.readerRequestGeneration += 1;
 		const generation = this.readerRequestGeneration;
 		this.readerDetail = undefined;
+		this.readerDetailKey = this.readerIdentity(item);
 		this.readerError = "";
 		this.readerLoading = true;
 		this.tui.requestRender();
@@ -1288,7 +1332,14 @@ export class ReviewDashboard {
 
 		if (this.showReader && item) {
 			const isIssue = item.type === "issue";
-			const detail = this.readerDetail as (PrDetail | IssueDetail) | undefined;
+			// A detail loaded for another row — above all, one of the other type —
+			// must never reach this row's formatter. Anything that moved the
+			// selection out from under the reader (an external queue refresh) shows
+			// the loading surface until the reload for this row lands.
+			const stale = this.readerDetailKey !== this.readerIdentity(item);
+			const detail = stale ? undefined : (this.readerDetail as PrDetail | IssueDetail | undefined);
+			const readerError = stale ? "" : this.readerError;
+			const readerLoading = stale ? true : this.readerLoading;
 			lines.push(this.painter.bold(this.painter.fg("accent", `${isIssue ? "ISSUE READER" : "PR READER"}: ${item.repo}#${item.id} — ${sanitizeMarkdown(item.title)}`)));
 			const labels = (isIssue && detail ? (detail as IssueDetail).labels : undefined) ?? item.labels;
 			const stateText = (isIssue && detail ? (detail as IssueDetail).state : undefined) ?? "unknown";
@@ -1302,9 +1353,9 @@ export class ReviewDashboard {
 			}
 			const detailLines = isIssue ? issueDetailToLines(detail as IssueDetail | undefined) : prDetailToLines(detail as PrDetail | undefined);
 			let linesToShow = detailLines;
-			if (this.readerError) {
-				linesToShow = [`(could not read ${isIssue ? "issue" : "PR"}: ${this.readerError})`];
-			} else if (this.readerLoading) {
+			if (readerError) {
+				linesToShow = [`(could not read ${isIssue ? "issue" : "PR"}: ${readerError})`];
+			} else if (readerLoading) {
 				linesToShow = isIssue
 					? ["(loading description, conversation, and linked pull requests…)"]
 					: ["(loading description and conversation…)"];
