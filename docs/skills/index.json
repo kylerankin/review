@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-09-16",
+  "generated_at": "2026-09-20",
   "schema_version": "1.0",
   "skills": [
     {
@@ -56,6 +56,25 @@
       "description": "Defines repository-neutral continuation, capacity, ownership, and evidence rules for bounded factory work.",
       "version": "1.3",
       "last_updated": "2026-08-14",
+      "doc_type": "policy"
+    },
+    {
+      "id": "hive-factory-evidence",
+      "name": "hive-factory-evidence",
+      "one_line_purpose": "Project only supported Hive factory evidence read-only into OMP Review.",
+      "entry_point": "docs/skills/hive-factory-evidence.md",
+      "category": "ci-ops",
+      "status": "active",
+      "tags": [
+        "hive",
+        "omp",
+        "read-only",
+        "evidence",
+        "projection"
+      ],
+      "description": "Maps which Hive factory facts OMP Review may project read-only, the endpoint/schema/auth/freshness of each, and why project convergence has no supported read mapping. Use before adding any Hive-sourced field to the queue card, rail, or status segment.",
+      "version": "1.0",
+      "last_updated": "2026-09-20",
       "doc_type": "policy"
     },
     {
