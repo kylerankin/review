@@ -46,6 +46,8 @@ jobs:
         with:
           app-id: ${{ secrets.MERGERAPTOR_APP_ID }}
           private-key: ${{ secrets.MERGERAPTOR_PRIVATE_KEY }}
+          # Per-repo installation lookup (GET /repos/{owner}/{repo}/installation) returns 404; owner: switches to the owner-level lookup. See #686.
+          owner: ${{ github.repository_owner }}
 
       - uses: renovatebot/github-action@9fea9f0fbf80401026d11d03911d62b1f70fef1f # v46.3.3
         with:
